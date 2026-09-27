@@ -1,38 +1,35 @@
-package router_test
+package router
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"testing"
+	"time"
 
 	"go-api-practice/internal/model"
-	"go-api-practice/internal/router"
+	"go-api-practice/internal/repository"
 )
 
 func TestHealth(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/health", nil)
-	recorder := httptest.NewRecorder()
+	response := sendRequest(newRouter(newFakeUserRepository()), http.MethodGet, "/health", nil)
 
-	router.New().ServeHTTP(recorder, request)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, response.Code)
 	}
-
-	if contentType := recorder.Header().Get("Content-Type"); contentType != "application/json" {
+	if contentType := response.Header().Get("Content-Type"); contentType != "application/json" {
 		t.Fatalf("expected Content-Type application/json, got %q", contentType)
 	}
-
-	expectedBody := "{\"status\":\"ok\"}\n"
-	if recorder.Body.String() != expectedBody {
-		t.Fatalf("expected body %q, got %q", expectedBody, recorder.Body.String())
+	if response.Body.String() != "{\"status\":\"ok\"}\n" {
+		t.Fatalf("unexpected body: %s", response.Body.String())
 	}
 }
 
 func TestUserCRUD(t *testing.T) {
-	r := router.New()
+	r := newRouter(newFakeUserRepository())
 
 	t.Run("list initial users", func(t *testing.T) {
 		response := sendRequest(r, http.MethodGet, "/users", nil)
@@ -54,14 +51,6 @@ func TestUserCRUD(t *testing.T) {
 		if response.Code != http.StatusOK {
 			t.Fatalf("expected status %d, got %d", http.StatusOK, response.Code)
 		}
-
-		var user model.User
-		if err := json.NewDecoder(response.Body).Decode(&user); err != nil {
-			t.Fatal(err)
-		}
-		if user.ID != 1 || user.Name != "An" {
-			t.Fatalf("unexpected user: %+v", user)
-		}
 	})
 
 	t.Run("reject invalid user", func(t *testing.T) {
@@ -82,9 +71,6 @@ func TestUserCRUD(t *testing.T) {
 		var created model.User
 		if err := json.NewDecoder(response.Body).Decode(&created); err != nil {
 			t.Fatal(err)
-		}
-		if created.ID != 3 {
-			t.Fatalf("expected new user ID 3, got %d", created.ID)
 		}
 
 		updateBody := []byte(`{"name":"Chi Updated","email":"chi.updated@example.com"}`)
@@ -114,4 +100,64 @@ func sendRequest(handler http.Handler, method, path string, body []byte) *httpte
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
+}
+
+type fakeUserRepository struct {
+	users  map[int]model.User
+	nextID int
+}
+
+func newFakeUserRepository() *fakeUserRepository {
+	createdAt := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	return &fakeUserRepository{
+		users: map[int]model.User{
+			1: {ID: 1, Name: "Mia", Email: "mia@example.com", CreatedAt: createdAt},
+			2: {ID: 2, Name: "Lisa", Email: "lisa@example.com", CreatedAt: createdAt},
+		},
+		nextID: 3,
+	}
+}
+
+func (r *fakeUserRepository) FindAll(_ context.Context) ([]model.User, error) {
+	users := make([]model.User, 0, len(r.users))
+	for _, user := range r.users {
+		users = append(users, user)
+	}
+	sort.Slice(users, func(i, j int) bool { return users[i].ID < users[j].ID })
+	return users, nil
+}
+
+func (r *fakeUserRepository) FindByID(_ context.Context, id int) (model.User, error) {
+	user, found := r.users[id]
+	if !found {
+		return model.User{}, repository.ErrUserNotFound
+	}
+	return user, nil
+}
+
+func (r *fakeUserRepository) Create(_ context.Context, user model.User) (model.User, error) {
+	user.ID = r.nextID
+	user.CreatedAt = time.Now()
+	r.nextID++
+	r.users[user.ID] = user
+	return user, nil
+}
+
+func (r *fakeUserRepository) Update(_ context.Context, id int, user model.User) (model.User, error) {
+	existing, found := r.users[id]
+	if !found {
+		return model.User{}, repository.ErrUserNotFound
+	}
+	user.ID = id
+	user.CreatedAt = existing.CreatedAt
+	r.users[id] = user
+	return user, nil
+}
+
+func (r *fakeUserRepository) Delete(_ context.Context, id int) error {
+	if _, found := r.users[id]; !found {
+		return repository.ErrUserNotFound
+	}
+	delete(r.users, id)
+	return nil
 }

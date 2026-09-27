@@ -1,6 +1,7 @@
 package router
 
 import (
+	"database/sql"
 	"net/http"
 
 	"go-api-practice/internal/handler"
@@ -11,14 +12,18 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-func New() http.Handler {
+func New(db *sql.DB) http.Handler {
+	userRepository := repository.NewPostgresUserRepository(db)
+	return newRouter(userRepository)
+}
+
+func newRouter(userRepository repository.UserRepository) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
 	r.Get("/health", handler.Health)
 
-	userRepository := repository.NewMemoryUserRepository()
 	userService := service.NewUserService(userRepository)
 	userHandler := handler.NewUserHandler(userService)
 

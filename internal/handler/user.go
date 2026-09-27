@@ -28,8 +28,14 @@ func NewUserHandler(service *service.UserService) *UserHandler {
 	return &UserHandler{service: service}
 }
 
-func (h *UserHandler) GetAll(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, h.service.GetAll())
+func (h *UserHandler) GetAll(w http.ResponseWriter, r *http.Request) {
+	users, err := h.service.GetAll(r.Context())
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, users)
 }
 
 func (h *UserHandler) GetByID(w http.ResponseWriter, r *http.Request) {
@@ -38,7 +44,7 @@ func (h *UserHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.service.GetByID(id)
+	user, err := h.service.GetByID(r.Context(), id)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -54,7 +60,7 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.service.Create(input.Name, input.Email)
+	user, err := h.service.Create(r.Context(), input.Name, input.Email)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -76,7 +82,7 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.service.Update(id, input.Name, input.Email)
+	user, err := h.service.Update(r.Context(), id, input.Name, input.Email)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -91,7 +97,7 @@ func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.service.Delete(id); err != nil {
+	if err := h.service.Delete(r.Context(), id); err != nil {
 		writeServiceError(w, err)
 		return
 	}
@@ -113,8 +119,13 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, service.ErrUserNotFound):
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: err.Error()})
-	case errors.Is(err, service.ErrNameRequired), errors.Is(err, service.ErrInvalidEmail):
+	case errors.Is(err, service.ErrNameRequired),
+		errors.Is(err, service.ErrNameTooLong),
+		errors.Is(err, service.ErrInvalidEmail),
+		errors.Is(err, service.ErrEmailTooLong):
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+	case errors.Is(err, service.ErrEmailExists):
+		writeJSON(w, http.StatusConflict, errorResponse{Error: err.Error()})
 	default:
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
 	}
